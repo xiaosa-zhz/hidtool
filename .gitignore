@@ -1,4 +1,6 @@
-/.vscode
-/.xmake
-/build
-/compile_commands.json
+.vscode
+.xmake
+.cache
+build
+compile_commands.json
+hid_report_desc.txt

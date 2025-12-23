@@ -7,6 +7,7 @@
 
 namespace hidraw {
 
+// From ioctl HIDIOCGRDESC
 class descriptor
 {
 public:
@@ -39,7 +40,23 @@ private:
     void* ptr = nullptr;
 };
 
-class info {}; // TODO
+// From ioctl HIDIOCGRAWINFO
+class info
+{
+public:
+    info() = default;
+    info(const info&) = default;
+    info& operator=(const info&) = default;
+    ~info() = default;
+
+    std::string to_string() const;
+    
+private:
+    friend class device;
+    std::uint32_t bustype = 0;
+    std::int16_t vendor = 0;
+    std::int16_t product = 0;
+};
 
 class device
 {
@@ -76,6 +93,7 @@ public:
     std::size_t report_desc_size() const;
     descriptor report_desc() const;
     info raw_info() const;
+    std::string raw_name() const;
 
 private:
     int fd = -1;

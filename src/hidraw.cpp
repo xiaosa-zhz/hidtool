@@ -2,12 +2,17 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <linux/hidraw.h>
+#include <linux/input.h>
 
 #include "hidraw.h"
 
 #include <new>
 #include <system_error>
 #include <format>
+#include <iterator>
+#include <array>
+#include <string_view>
+#include <algorithm>
 
 #define ASSERT_FD_OPENED() \
     do { \
@@ -55,6 +60,10 @@ descriptor::~descriptor() {
     delete_report_descriptor(ptr);
 }
 
+// Format:
+//  size: ...
+//  XX XX XX XX XX XX XX XX XX XX XX XX XX XX XX XX
+//  ...
 std::string descriptor::to_hex() const {
     if (!ptr) return {};
 
@@ -62,10 +71,14 @@ std::string descriptor::to_hex() const {
     const std::size_t size = head->size;
     const unsigned char* data = std::launder(reinterpret_cast<const unsigned char*>(head + 1));
     std::string result;
-    result.resize(size * 2);
-
+    auto it = std::back_inserter(result);
+    it = std::format_to(it, "size: {}\n", size);
     for (std::size_t i = 0; i < size; ++i) {
-        std::format_to(result.data() + i * 2, "{:02X}", data[i]);
+        it = std::format_to(it, "{:02X} ", data[i]);
+        if ((i + 1) % 16 == 0) {
+            *it = '\n';
+            ++it;
+        }
     }
 
     return result;
@@ -77,7 +90,7 @@ void device::open(const std::filesystem::path& path) {
     }
 
     fd = ::open(path.c_str(), O_RDWR | O_CLOEXEC);
-    if (fd == -1) {
+    if (fd < 0) {
         throw std::system_error(errno, std::generic_category(),
             std::format("Failed to open device at '{}'", path.string()));
     }
@@ -116,8 +129,55 @@ descriptor device::report_desc() const {
 
 info device::raw_info() const {
     ASSERT_FD_OPENED();
-    // TODO
-    return info{};
+    ::hidraw_devinfo raw_info;
+    if (::ioctl(fd, HIDIOCGRAWINFO, &raw_info) < 0) {
+        throw std::system_error(errno, std::generic_category(),
+            "Failed to get raw info");
+    }
+    info info;
+    info.bustype = raw_info.bustype;
+    info.vendor = raw_info.vendor;
+    info.product = raw_info.product;
+    return info;
+}
+
+static constexpr std::array bus_type_list = {
+    BUS_USB,
+    BUS_HIL,
+    BUS_BLUETOOTH,
+    BUS_VIRTUAL,
+};
+
+static constexpr std::size_t bus_type_table_size = std::ranges::max(bus_type_list) + 1;
+
+static constexpr std::array<std::string_view, bus_type_table_size> bus_type_lookup = [] consteval {
+    std::array<std::string_view, bus_type_table_size> arr{};
+    arr.fill("UNKNOWN");
+    arr[BUS_USB] = "USB";
+    arr[BUS_HIL] = "HIL";
+    arr[BUS_BLUETOOTH] = "BLUETOOTH";
+    arr[BUS_VIRTUAL] = "VIRTUAL";
+    return arr;
+}();
+
+std::string info::to_string() const {
+    return std::format("Bus Type: {} (0x{:04X}), Vendor ID: {} (0x{:04X}), Product ID: {} (0x{:04X})",
+        (bustype <= bus_type_table_size ? bus_type_lookup[bustype] : "UNKNOWN"),
+        bustype,
+        vendor, vendor,
+        product, product);
+}
+
+std::string device::raw_name() const {
+    ASSERT_FD_OPENED();
+    constexpr std::size_t max_len = 256;
+    std::string name;
+    name.resize(max_len);
+    if (::ioctl(fd, HIDIOCGRAWNAME(max_len), name.data()) < 0) {
+        throw std::system_error(errno, std::generic_category(),
+            "Failed to get raw name");
+    }
+    return name;
 }
 
 } // namespace hidraw
