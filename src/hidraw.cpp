@@ -8,24 +8,32 @@
 
 #include <new>
 #include <system_error>
+#include <type_traits>
 #include <format>
 #include <iterator>
 #include <array>
 #include <string_view>
 #include <algorithm>
+#include <utility>
 
 #define ASSERT_FD_OPENED() \
     do { \
         if (fd < 0) { \
             throw std::runtime_error("Device not opened"); \
         } \
-    } while (0)
+    } while (0)  
 
 namespace hidraw {
 
 struct report_descriptor_head {
     ::__u32 size;
 };
+
+template<typename... Args>
+[[noreturn]] static inline void throw_system_error(
+    std::type_identity_t<std::format_string<Args...>> fmt, Args&&... args) noexcept(false) {
+    throw std::system_error(errno, std::system_category(), std::format(fmt, std::forward<Args>(args)...));
+}
 
 static inline report_descriptor_head* to_report_descriptor_head(void* ptr) noexcept {
     return static_cast<report_descriptor_head*>(ptr);
@@ -91,8 +99,7 @@ void device::open(const std::filesystem::path& path) {
 
     fd = ::open(path.c_str(), O_RDWR | O_CLOEXEC);
     if (fd < 0) {
-        throw std::system_error(errno, std::generic_category(),
-            std::format("Failed to open device at '{}'", path.string()));
+        throw_system_error("Failed to open device at '{}'", path.string());
     }
 }
 
@@ -107,8 +114,7 @@ std::size_t device::report_desc_size() const {
     ASSERT_FD_OPENED();
     int size;
     if (::ioctl(fd, HIDIOCGRDESCSIZE, &size) < 0) {
-        throw std::system_error(errno, std::generic_category(),
-            "Failed to get report descriptor size");
+        throw_system_error("Failed to get report descriptor size");
     }
     return static_cast<std::size_t>(size);
 }
@@ -116,14 +122,11 @@ std::size_t device::report_desc_size() const {
 descriptor device::report_desc() const {
     ASSERT_FD_OPENED();
     const std::size_t size = report_desc_size();
-    report_descriptor_head* head = create_report_descriptor(size);
-    if (::ioctl(fd, HIDIOCGRDESC, reinterpret_cast<::hidraw_report_descriptor*>(head)) < 0) {
-        delete_report_descriptor(head);
-        throw std::system_error(errno, std::generic_category(),
-            "Failed to get report descriptor");
-    }
     descriptor desc;
-    desc.ptr = head;
+    desc.ptr = create_report_descriptor(size);
+    if (::ioctl(fd, HIDIOCGRDESC, reinterpret_cast<::hidraw_report_descriptor*>(desc.ptr)) < 0) {
+        throw_system_error("Failed to get report descriptor");
+    }
     return desc;
 }
 
@@ -131,8 +134,7 @@ info device::raw_info() const {
     ASSERT_FD_OPENED();
     ::hidraw_devinfo raw_info;
     if (::ioctl(fd, HIDIOCGRAWINFO, &raw_info) < 0) {
-        throw std::system_error(errno, std::generic_category(),
-            "Failed to get raw info");
+        throw_system_error("Failed to get raw info");
     }
     info info;
     info.bustype = raw_info.bustype;
@@ -162,8 +164,7 @@ static constexpr std::array<std::string_view, bus_type_table_size> bus_type_look
 
 std::string info::to_string() const {
     return std::format("Bus Type: {} (0x{:04X}), Vendor ID: {} (0x{:04X}), Product ID: {} (0x{:04X})",
-        (bustype <= bus_type_table_size ? bus_type_lookup[bustype] : "UNKNOWN"),
-        bustype,
+        (bustype < bus_type_table_size ? bus_type_lookup[bustype] : "UNKNOWN"), bustype,
         vendor, vendor,
         product, product);
 }
@@ -174,8 +175,7 @@ std::string device::raw_name() const {
     std::string name;
     name.resize(max_len);
     if (::ioctl(fd, HIDIOCGRAWNAME(max_len), name.data()) < 0) {
-        throw std::system_error(errno, std::generic_category(),
-            "Failed to get raw name");
+        throw_system_error("Failed to get raw name");
     }
     name.resize(std::strlen(name.c_str()));
     return name;
@@ -187,8 +187,7 @@ std::string device::addr() const {
     std::string addr;
     addr.resize(max_len);
     if (::ioctl(fd, HIDIOCGRAWPHYS(max_len), addr.data()) < 0) {
-        throw std::system_error(errno, std::generic_category(),
-            "Failed to get raw address");
+        throw_system_error("Failed to get raw address");
     }
     addr.resize(std::strlen(addr.c_str()));
     return addr;

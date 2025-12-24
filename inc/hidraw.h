@@ -4,6 +4,7 @@
 #include <string>
 #include <filesystem>
 #include <utility>
+#include <span>
 
 namespace hidraw {
 

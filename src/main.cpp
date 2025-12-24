@@ -4,6 +4,8 @@
 
 /**
  * This program is a simple wrapper around ioctl of hidraw device.
+ * Usage:
+ *  hidtool <hidraw device path>
  */
 
 int main(int argc, char* argv[]) {
