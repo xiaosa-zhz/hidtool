@@ -21,7 +21,8 @@ int main(int argc, char* argv[]) {
         std::println("[Address] {}", dev.addr());
         std::println("[Info]");
         std::println("{}", dev.raw_info().to_string());
-        std::println("[HID Report Descriptor]\n{}", desc.to_hex());
+        std::println("[HID Report Descriptor]");
+        std::println("{}", desc.to_hex());
     } catch (const std::exception& e) {
         std::println("Error: {}", e.what());
         return 1;
