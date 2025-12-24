@@ -4,3 +4,4 @@
 build
 compile_commands.json
 hid_report_desc.txt
+report_*

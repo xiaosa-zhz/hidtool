@@ -177,7 +177,21 @@ std::string device::raw_name() const {
         throw std::system_error(errno, std::generic_category(),
             "Failed to get raw name");
     }
+    name.resize(std::strlen(name.c_str()));
     return name;
+}
+
+std::string device::addr() const {
+    ASSERT_FD_OPENED();
+    constexpr std::size_t max_len = 256;
+    std::string addr;
+    addr.resize(max_len);
+    if (::ioctl(fd, HIDIOCGRAWPHYS(max_len), addr.data()) < 0) {
+        throw std::system_error(errno, std::generic_category(),
+            "Failed to get raw address");
+    }
+    addr.resize(std::strlen(addr.c_str()));
+    return addr;
 }
 
 } // namespace hidraw

@@ -94,6 +94,7 @@ public:
     descriptor report_desc() const;
     info raw_info() const;
     std::string raw_name() const;
+    std::string addr() const;
 
 private:
     int fd = -1;
