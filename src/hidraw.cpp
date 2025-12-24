@@ -14,6 +14,7 @@
 #include <array>
 #include <string_view>
 #include <algorithm>
+#include <cstring>
 #include <utility>
 
 #define ASSERT_FD_OPENED() \
