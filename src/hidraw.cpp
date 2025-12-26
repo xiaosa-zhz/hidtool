@@ -1,10 +1,9 @@
 #include <sys/ioctl.h>
 #include <fcntl.h>
 #include <unistd.h>
-#include <linux/hidraw.h>
 #include <linux/input.h>
 
-#include "hidraw.h"
+#include "hidraw_priv.h"
 
 #include <new>
 #include <system_error>
@@ -26,39 +25,10 @@
 
 namespace hidraw {
 
-struct report_descriptor_head {
-    ::__u32 size;
-};
-
 template<typename... Args>
 [[noreturn]] static inline void throw_system_error(
     std::type_identity_t<std::format_string<Args...>> fmt, Args&&... args) noexcept(false) {
     throw std::system_error(errno, std::system_category(), std::format(fmt, std::forward<Args>(args)...));
-}
-
-static inline report_descriptor_head* to_report_descriptor_head(void* ptr) noexcept {
-    return static_cast<report_descriptor_head*>(ptr);
-}
-
-static inline report_descriptor_head* dump_report_descriptor(void* ptr) {
-    [[assume(ptr != nullptr)]];
-    report_descriptor_head* head = to_report_descriptor_head(ptr);
-    const std::size_t total = sizeof(report_descriptor_head) + head->size;
-    unsigned char* buf = new (std::align_val_t(alignof(report_descriptor_head))) unsigned char[total];
-    void* new_desc = std::memcpy(buf, ptr, total);
-    return static_cast<report_descriptor_head*>(new_desc);
-}
-
-static inline report_descriptor_head* create_report_descriptor(std::size_t size) {
-    const std::size_t total = sizeof(report_descriptor_head) + size;
-    unsigned char* buf = new (std::align_val_t(alignof(report_descriptor_head))) unsigned char[total];
-    report_descriptor_head* head = reinterpret_cast<report_descriptor_head*>(buf);
-    head->size = static_cast<::__u32>(size);
-    return head;
-}
-
-static inline void delete_report_descriptor(void* ptr) {
-    delete[] static_cast<unsigned char*>(ptr);
 }
 
 descriptor::descriptor(const descriptor& other)
@@ -91,6 +61,14 @@ std::string descriptor::to_hex() const {
     }
 
     return result;
+}
+
+std::span<const std::uint8_t> descriptor::to_bytes() const noexcept {
+    if (!ptr) return {};
+    report_descriptor_head* head = to_report_descriptor_head(ptr);
+    const std::size_t size = head->size;
+    const unsigned char* data = std::launder(reinterpret_cast<const unsigned char*>(head + 1));
+    return std::span<const std::uint8_t>(reinterpret_cast<const std::uint8_t*>(data), size);
 }
 
 void device::open(const std::filesystem::path& path) {
@@ -192,6 +170,20 @@ std::string device::addr() const {
     }
     addr.resize(std::strlen(addr.c_str()));
     return addr;
+}
+
+void device::feature_get(std::span<std::uint8_t> data) {
+    ASSERT_FD_OPENED();
+    if (data.empty()) {
+        throw std::invalid_argument("Data buffer is empty");
+    }
+    ::ssize_t ret = ::ioctl(fd, HIDIOCGFEATURE(data.size()), data.data());
+    if (ret < 0) {
+        throw_system_error("Failed to get feature report");
+    }
+    if (static_cast<std::size_t>(ret) != data.size()) {
+        throw std::runtime_error("Incomplete feature report read");
+    }
 }
 
 } // namespace hidraw

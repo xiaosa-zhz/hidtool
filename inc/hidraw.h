@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <string>
 #include <filesystem>
 #include <utility>
@@ -35,6 +36,9 @@ public:
     }
 
     std::string to_hex() const;
+
+    // Raw bytes of the HID report descriptor
+    std::span<const std::uint8_t> to_bytes() const noexcept;
 
 private:
     friend class device;
@@ -96,6 +100,11 @@ public:
     info raw_info() const;
     std::string raw_name() const;
     std::string addr() const;
+
+    // void write(const std::span<const std::uint8_t> data);
+    // void read(std::span<std::uint8_t> data);
+    void feature_get(std::span<std::uint8_t> data);
+    // void feature_set();
 
 private:
     int fd = -1;

@@ -7,8 +7,11 @@
 #include <algorithm>
 #include <format>
 #include <charconv>
+#include <fstream>
+#include <chrono>
 
 #include "hidraw.h"
+#include "hid_report_desc.h"
 
 /**
  * This program is a simple wrapper around ioctl of hidraw device.
@@ -40,18 +43,70 @@ static int dump(const hidraw::device& dev) {
     return 0;
 }
 
+static int dumphid(hidraw::device& dev, const std::optional<std::filesystem::path>& output_path = std::nullopt) {
+    auto desc = dev.report_desc();
+    auto bytes = desc.to_bytes();
+    auto tree = hid::report_descriptor_tree::parse(bytes);
+    std::string text = tree.to_string();
+
+    if (!output_path) {
+        std::println("{}", text);
+        return 0;
+    }
+
+    const auto& out = *output_path;
+    std::filesystem::path final_path = out;
+    if (std::filesystem::is_directory(out)) {
+        auto now = std::chrono::system_clock::now();
+        auto fname = std::format("{:%Y%m%d_%H%M%S}_hid.txt", now);
+        final_path = out / fname;
+    }
+
+    std::ofstream ofs(final_path, std::ios::binary);
+    if (!ofs) {
+        throw std::runtime_error(std::format("Failed to open output path: {}", final_path.string()));
+    }
+    ofs << text;
+    std::println("[Saved human-readable HID descriptor] {}", final_path.string());
+    return 0;
+}
+
 static int send(hidraw::device& dev, uint8_t report_id, const std::filesystem::path& hex_file_path) {
     throw std::runtime_error("Sorry, not implemented yet.");
     return 0;
 }
 
-static int recv(hidraw::device& dev, uint8_t report_id, const std::optional<std::filesystem::path>& output_path) {
+static int recv(hidraw::device& dev, uint8_t report_id, const std::optional<std::filesystem::path>& output_path = std::nullopt) {
     throw std::runtime_error("Sorry, not implemented yet.");
     return 0;
 }
 
-static int feature_get(hidraw::device& dev, uint8_t report_id, const std::optional<std::filesystem::path>& output_path) {
-    throw std::runtime_error("Sorry, not implemented yet.");
+static int feature_get(hidraw::device& dev, uint8_t report_id, const std::optional<std::filesystem::path>& output_path = std::nullopt) {
+    hidraw::descriptor desc = dev.report_desc();
+    auto tree = hid::report_descriptor_tree::parse(desc.to_bytes());
+    auto field = tree.find_by_report_id(report_id);
+    // Find feature report size
+    std::size_t feature_size = 0;
+    for (const auto& f : field) {
+        if (f->kind == hid::report_descriptor_tree::field_kind::feature) {
+            feature_size += (f->report_size_bits * f->report_count + 7) / 8;
+        }
+    }
+    if (feature_size == 0) {
+        throw std::runtime_error(std::format("No feature report with ID {} found.", report_id));
+    }
+    std::vector<std::uint8_t> buffer(feature_size + 1);
+    buffer[0] = report_id;
+    dev.feature_get(buffer);
+    if (!output_path) {
+        // Print
+        std::println("Feature Report ID {} ({} bytes):", report_id, feature_size);
+        for (std::size_t i = 1; i < buffer.size(); ++i) {
+            std::println("{:02X} ", buffer[i]);
+            if (i % 16 == 0) std::println();
+        }
+        if ((buffer.size() - 1) % 16 != 0) std::println();
+    }
     return 0;
 }
 
@@ -87,6 +142,14 @@ private:
 
 static int dump_handler(const interact& self, hidraw::device& dev, char* rest_args[]) {
     return dump(dev);
+}
+
+static int dumphid_handler(const interact& self, hidraw::device& dev, char* rest_args[]) {
+    std::optional<std::filesystem::path> output_path = std::nullopt;
+    if (rest_args[0]) {
+        output_path = rest_args[0];
+    }
+    return dumphid(dev, output_path);
 }
 
 static uint8_t parse_report_id(const interact& self, std::string_view arg) {
@@ -136,7 +199,7 @@ static int feature_get_handler(const interact& self, hidraw::device& dev, char* 
         throw wrong_usage_exception(self, "Missing arguments for feature-get command.");
     }
     uint8_t report_id = parse_report_id(self, rest_args[0]);
-    std::optional<std::filesystem::path> output_path;
+    std::optional<std::filesystem::path> output_path = std::nullopt;
     if (rest_args[1]) {
         output_path = rest_args[1];
     }
@@ -179,6 +242,11 @@ static constexpr std::string_view dump_usage = R"(  dump <hidraw device path>
     - Dumps device info the HID report descriptor.
 )";
 
+static constexpr std::string_view dumphid_usage = R"(  dumphid <hidraw device path> [<output file or dir>]
+    - Prints HID report descriptor in a human-readable form only.
+    - If <output path> is a directory, saves to a timestamped file inside.
+)";
+
 static constexpr std::string_view send_usage = R"(  send <hidraw device path> <report id> <hex data file path>
     - Sends an output report to the device.
 )";
@@ -199,29 +267,25 @@ static constexpr std::string_view feature_set_usage = R"(  feature-set <hidraw d
     - Sets a feature report to the device.
 )";
 
-static constexpr auto raw_usage = [] {
-    constexpr std::size_t total_size = dump_usage.size()
-        + send_usage.size()
-        + recv_usage.size()
-        + feature_get_usage.size()
-        + feature_set_usage.size()
-        + 100; // extra newlines
+template<const std::string_view&... usages>
+consteval auto make_raw_usage() noexcept {
+    constexpr std::size_t total_size = (usages.size() + ... + 0) + sizeof...(usages) + 100;
     std::array<char, total_size> buf{};
-    auto it = buf.begin();
-    it = std::copy(dump_usage.begin(), dump_usage.end(), it);
-    *it++ = '\n';
-    it = std::copy(send_usage.begin(), send_usage.end(), it);
-    *it++ = '\n';
-    it = std::copy(recv_usage.begin(), recv_usage.end(), it);
-    *it++ = '\n';
-    it = std::copy(feature_get_usage.begin(), feature_get_usage.end(), it);
-    *it++ = '\n';
-    it = std::copy(feature_set_usage.begin(), feature_set_usage.end(), it);
-    *it++ = '\n';
+    auto it = buf.data();
+    ((it = std::ranges::copy(usages, it).out, *it++ = '\n'), ...);
     constexpr std::string_view help_line = "  help\n    - Displays this help message.\n";
-    it = std::copy(help_line.begin(), help_line.end(), it);
+    it = std::ranges::copy(help_line, it).out;
     return buf;
-}();
+}
+
+static constexpr auto raw_usage = make_raw_usage<
+    dump_usage,
+    dumphid_usage,
+    send_usage,
+    recv_usage,
+    feature_get_usage,
+    feature_set_usage
+>();
 
 static constexpr std::string_view usage = std::string_view(raw_usage.begin(), std::ranges::find(raw_usage, '\0'));
 
@@ -230,6 +294,7 @@ static constexpr auto help_command = "help";
 static constexpr auto commands = [] {
     auto cmds = std::to_array<interact>({
         {"dump", &dump_handler, dump_usage},
+        {"dumphid", &dumphid_handler, dumphid_usage},
         {"send", &send_handler, send_usage},
         {"recv", &recv_handler, recv_usage},
         {"feature-get", &feature_get_handler, feature_get_usage},
