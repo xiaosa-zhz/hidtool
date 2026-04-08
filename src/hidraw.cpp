@@ -173,6 +173,34 @@ std::string device::addr() const {
     return addr;
 }
 
+void device::write(std::span<const std::uint8_t> data) {
+    ASSERT_FD_OPENED();
+    if (data.empty()) {
+        throw std::invalid_argument("Data buffer is empty");
+    }
+    ::ssize_t ret = ::write(fd, data.data(), data.size());
+    if (ret < 0) {
+        throw_system_error("Failed to write output report");
+    }
+    if (static_cast<std::size_t>(ret) != data.size()) {
+        throw std::runtime_error(std::format(
+            "Incomplete output report write: wrote {} of {} bytes",
+            ret, data.size()));
+    }
+}
+
+std::size_t device::read(std::span<std::uint8_t> data) {
+    ASSERT_FD_OPENED();
+    if (data.empty()) {
+        throw std::invalid_argument("Data buffer is empty");
+    }
+    ::ssize_t ret = ::read(fd, data.data(), data.size());
+    if (ret < 0) {
+        throw_system_error("Failed to read input report");
+    }
+    return static_cast<std::size_t>(ret);
+}
+
 void device::feature_get(std::span<std::uint8_t> data) {
     ASSERT_FD_OPENED();
     if (data.empty()) {

@@ -101,8 +101,8 @@ public:
     std::string raw_name() const;
     std::string addr() const;
 
-    // void write(const std::span<const std::uint8_t> data);
-    // void read(std::span<std::uint8_t> data);
+    void write(std::span<const std::uint8_t> data);
+    std::size_t read(std::span<std::uint8_t> data);
     void feature_get(std::span<std::uint8_t> data);
     void feature_set(std::span<const std::uint8_t> data);
 
