@@ -104,7 +104,7 @@ public:
     // void write(const std::span<const std::uint8_t> data);
     // void read(std::span<std::uint8_t> data);
     void feature_get(std::span<std::uint8_t> data);
-    // void feature_set();
+    void feature_set(std::span<const std::uint8_t> data);
 
 private:
     int fd = -1;

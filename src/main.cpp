@@ -110,8 +110,69 @@ static int feature_get(hidraw::device& dev, uint8_t report_id, const std::option
     return 0;
 }
 
+static std::vector<std::uint8_t> read_hex_file(const std::filesystem::path& path) {
+    std::ifstream ifs(path);
+    if (!ifs) {
+        throw std::runtime_error(std::format("Failed to open hex file: {}", path.string()));
+    }
+    std::vector<std::uint8_t> result;
+    std::string line;
+    while (std::getline(ifs, line)) {
+        std::string_view sv(line);
+        auto pos = sv.find_first_not_of(" \t");
+        if (pos == std::string_view::npos) continue;
+        sv = sv.substr(pos);
+        if (sv.starts_with("//") || sv.starts_with("#") || sv.starts_with("size:"))
+            continue;
+        while (!sv.empty()) {
+            pos = sv.find_first_not_of(" \t,");
+            if (pos == std::string_view::npos) break;
+            sv = sv.substr(pos);
+            auto tok_end = sv.find_first_of(" \t,");
+            auto token = sv.substr(0, tok_end);
+            if (token.starts_with("0x") || token.starts_with("0X"))
+                token.remove_prefix(2);
+            uint8_t val = 0;
+            auto [ptr, ec] = std::from_chars(token.data(), token.data() + token.size(), val, 16);
+            if (ec != std::errc{} || ptr != token.data() + token.size())
+                throw std::runtime_error(std::format("Invalid hex byte '{}' in {}", token, path.string()));
+            result.push_back(val);
+            sv = (tok_end == std::string_view::npos) ? std::string_view{} : sv.substr(tok_end);
+        }
+    }
+    return result;
+}
+
 static int feature_set(hidraw::device& dev, uint8_t report_id, const std::filesystem::path& hex_file_path) {
-    throw std::runtime_error("Sorry, not implemented yet.");
+    auto data = read_hex_file(hex_file_path);
+    if (data.empty()) {
+        throw std::runtime_error("Hex file contains no data.");
+    }
+
+    hidraw::descriptor desc = dev.report_desc();
+    auto tree = hid::report_descriptor_tree::parse(desc.to_bytes());
+    auto fields = tree.find_by_report_id(report_id);
+    std::size_t feature_size = 0;
+    for (const auto& f : fields) {
+        if (f->kind == hid::report_descriptor_tree::field_kind::feature) {
+            feature_size += (f->report_size_bits * f->report_count + 7) / 8;
+        }
+    }
+    if (feature_size == 0) {
+        throw std::runtime_error(std::format("No feature report with ID {} found.", report_id));
+    }
+    if (data.size() != feature_size) {
+        throw std::runtime_error(std::format(
+            "Data size mismatch: file has {} bytes, but feature report ID {} expects {} bytes.",
+            data.size(), report_id, feature_size));
+    }
+
+    std::vector<std::uint8_t> buffer(feature_size + 1);
+    buffer[0] = report_id;
+    std::copy(data.begin(), data.end(), buffer.begin() + 1);
+
+    dev.feature_set(buffer);
+    std::println("Feature Report ID {} set ({} bytes).", report_id, feature_size);
     return 0;
 }
 

@@ -6,6 +6,7 @@
 #include "hidraw_priv.h"
 
 #include <new>
+#include <vector>
 #include <system_error>
 #include <type_traits>
 #include <format>
@@ -183,6 +184,18 @@ void device::feature_get(std::span<std::uint8_t> data) {
     }
     if (static_cast<std::size_t>(ret) != data.size()) {
         throw std::runtime_error("Incomplete feature report read");
+    }
+}
+
+void device::feature_set(std::span<const std::uint8_t> data) {
+    ASSERT_FD_OPENED();
+    if (data.empty()) {
+        throw std::invalid_argument("Data buffer is empty");
+    }
+    std::vector<std::uint8_t> buf(data.begin(), data.end());
+    ::ssize_t ret = ::ioctl(fd, HIDIOCSFEATURE(buf.size()), buf.data());
+    if (ret < 0) {
+        throw_system_error("Failed to set feature report");
     }
 }
 
