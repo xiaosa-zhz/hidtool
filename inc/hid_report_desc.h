@@ -80,10 +80,3 @@ private:
 };
 
 } // namespace hid
-#pragma once
-
-namespace hid {
-
-
-    
-} // namespace hid
