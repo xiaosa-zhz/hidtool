@@ -3,7 +3,7 @@
 #include <unistd.h>
 #include <linux/input.h>
 
-#include "hidraw_priv.h"
+#include "priv/hidraw_priv.h"
 
 #include <new>
 #include <vector>
