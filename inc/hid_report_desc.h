@@ -67,16 +67,11 @@ public:
     // Find all fields bound to a specific report ID
     std::vector<const report_field*> find_by_report_id(uint8_t report_id) const;
 
-    // Human-readable dump
-    std::string to_string() const;
-
     const collection_node& root() const { return *root_; }
 
 private:
     std::unique_ptr<collection_node> root_;
     std::unordered_map<uint8_t, std::vector<const report_field*>> index_by_report_id_;
-    // Keep a view of the original descriptor bytes for standardized rendering
-    std::span<const std::uint8_t> source_bytes_{};
 };
 
 } // namespace hid

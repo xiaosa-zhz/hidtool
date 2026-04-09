@@ -12,6 +12,7 @@
 
 #include "hidraw.h"
 #include "hid_report_desc.h"
+#include "hid_report_desc_dump.h"
 
 /**
  * This program is a simple wrapper around ioctl of hidraw device.
@@ -45,9 +46,7 @@ static int dump(const hidraw::device& dev) {
 
 static int dumphid(hidraw::device& dev, const std::optional<std::filesystem::path>& output_path = std::nullopt) {
     auto desc = dev.report_desc();
-    auto bytes = desc.to_bytes();
-    auto tree = hid::report_descriptor_tree::parse(bytes);
-    std::string text = tree.to_string();
+    std::string text = hid::descriptor_to_string(desc.to_bytes());
 
     if (!output_path) {
         std::println("{}", text);
