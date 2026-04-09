@@ -1,7 +1,10 @@
 // HID Report Descriptor parser — table-driven per USB HID 1.11.
 #include "hid_report_desc.h"
 
+#include <type_traits>
+#include <iterator>
 #include <stack>
+#include <array>
 #include <format>
 #include <algorithm>
 #include <string_view>
@@ -21,7 +24,7 @@ struct item {
 	uint32_t data = 0;
 };
 
-static item parse_item(const uint8_t*& p, const uint8_t* end) {
+static item parse_item(const uint8_t*& p, const uint8_t* end) noexcept {
 	if (p >= end) return {};
 	uint8_t prefix = *p++;
 	item it{};
@@ -46,7 +49,7 @@ static item parse_item(const uint8_t*& p, const uint8_t* end) {
 	return it;
 }
 
-static constexpr int32_t sign_extend(uint32_t v, uint8_t size) {
+static constexpr int32_t sign_extend(uint32_t v, uint8_t size) noexcept {
 	switch (size) {
 		case 1: return static_cast<int8_t>(static_cast<uint8_t>(v));
 		case 2: return static_cast<int16_t>(static_cast<uint16_t>(v));
@@ -63,20 +66,21 @@ struct named_u16 { uint16_t value; std::string_view name; };
 struct usage_entry { uint16_t page; uint32_t usage; std::string_view name; };
 
 // Collection types — HID 1.11 §6.2.2.6
-static constexpr named_u8 collection_types[] = {
+static constexpr auto collection_types = std::to_array<named_u8>({
 	{0x00, "Physical"},      {0x01, "Application"},   {0x02, "Logical"},
 	{0x03, "Report"},        {0x04, "Named Array"},
 	{0x05, "Usage Switch"},  {0x06, "Usage Modifier"},
-};
+});
+static_assert(std::ranges::is_sorted(collection_types, {}, &named_u8::value));
 
-static std::string_view collection_type_name(uint8_t t) {
-	for (auto& e : collection_types)
-		if (e.value == t) return e.name;
+static std::string_view collection_type_name(uint8_t t) noexcept {
+	auto it = std::ranges::lower_bound(collection_types, t, {}, &named_u8::value);
+	if (it != std::ranges::end(collection_types) && it->value == t) return it->name;
 	return (t >= 0x80) ? "Vendor Defined" : "Reserved";
 }
 
 // Usage Pages — HID Usage Tables 1.12
-static constexpr named_u16 usage_pages[] = {
+static constexpr auto usage_pages = std::to_array<named_u16>({
 	{0x01, "Generic Desktop Ctrls"}, {0x02, "Simulation Ctrls"},
 	{0x03, "VR Ctrls"},             {0x04, "Sport Ctrls"},
 	{0x05, "Game Ctrls"},           {0x06, "Generic Device Ctrls"},
@@ -86,18 +90,19 @@ static constexpr named_u16 usage_pages[] = {
 	{0x0D, "Digitizer"},            {0x0E, "Haptics"},
 	{0x0F, "PID"},                  {0x10, "Unicode"},
 	{0x14, "Alphanumeric Display"},
-};
+});
+static_assert(std::ranges::is_sorted(usage_pages, {}, &named_u16::value));
 
 static std::string usage_page_name(uint16_t page) {
-	for (auto& e : usage_pages)
-		if (e.value == page) return std::string(e.name);
+	auto it = std::ranges::lower_bound(usage_pages, page, {}, &named_u16::value);
+	if (it != std::ranges::end(usage_pages) && it->value == page) return std::string(it->name);
 	if (page >= 0xFF00)
 		return std::format("Vendor Defined 0x{:04X}", page);
 	return std::format("0x{:04X}", page);
 }
 
 // Known usages organised by page
-static constexpr usage_entry known_usages[] = {
+static constexpr auto known_usages = std::to_array<usage_entry>({
 	// Generic Desktop (0x01)
 	{0x01, 0x01, "Pointer"},  {0x01, 0x02, "Mouse"},
 	{0x01, 0x04, "Joystick"}, {0x01, 0x05, "Game Pad"},
@@ -107,6 +112,11 @@ static constexpr usage_entry known_usages[] = {
 	{0x01, 0x33, "Rx"}, {0x01, 0x34, "Ry"}, {0x01, 0x35, "Rz"},
 	{0x01, 0x36, "Slider"}, {0x01, 0x37, "Dial"}, {0x01, 0x38, "Wheel"},
 	{0x01, 0x39, "Hat switch"},
+	// Consumer (0x0C)
+	{0x0C, 0xB5, "Scan Next Track"},     {0x0C, 0xB6, "Scan Previous Track"},
+	{0x0C, 0xCD, "Play/Pause"},
+	{0x0C, 0xE0, "Volume"},
+	{0x0C, 0xE9, "Volume Increment"},    {0x0C, 0xEA, "Volume Decrement"},
 	// Digitizer (0x0D)
 	{0x0D, 0x01, "Digitizer"},    {0x0D, 0x02, "Pen"},
 	{0x0D, 0x04, "Touch Screen"}, {0x0D, 0x20, "Stylus"},
@@ -124,16 +134,16 @@ static constexpr usage_entry known_usages[] = {
 	{0x0E, 0x22, "Auto Trigger Associated Control"},
 	{0x0E, 0x23, "Intensity"},           {0x0E, 0x24, "Repeat Count"},
 	{0x0E, 0x25, "Retrigger Period"},    {0x0E, 0x28, "Waveform Cutoff Time"},
-	// Consumer (0x0C)
-	{0x0C, 0xB5, "Scan Next Track"},     {0x0C, 0xB6, "Scan Previous Track"},
-	{0x0C, 0xCD, "Play/Pause"},
-	{0x0C, 0xE0, "Volume"},
-	{0x0C, 0xE9, "Volume Increment"},    {0x0C, 0xEA, "Volume Decrement"},
-};
+});
+static constexpr auto usage_entry_proj(const usage_entry& e) noexcept {
+	return std::make_tuple(e.page, e.usage);
+}
+static_assert(std::ranges::is_sorted(known_usages, {}, &usage_entry_proj));
 
 static std::string usage_name(uint16_t page, uint32_t usage) {
-	for (auto& e : known_usages)
-		if (e.page == page && e.usage == usage) return std::string(e.name);
+	auto key = std::make_tuple(page, usage);
+	auto it = std::ranges::lower_bound(known_usages, key, {}, &usage_entry_proj);
+	if (it != std::ranges::end(known_usages) && usage_entry_proj(*it) == key) return std::string(it->name);
 	if (page == 0x09 && usage > 0)
 		return std::format("Button {}", usage);
 	return std::format("0x{:X}", usage);
@@ -147,7 +157,7 @@ enum class iof_kind : uint8_t { input, output, feature };
 
 struct flag_pair { std::string_view clear; std::string_view set; };
 
-static constexpr flag_pair iof_flags[] = {
+static constexpr auto iof_flags = std::to_array<flag_pair>({
 	{"Data",            "Const"},
 	{"Array",           "Var"},
 	{"Abs",             "Rel"},
@@ -155,7 +165,7 @@ static constexpr flag_pair iof_flags[] = {
 	{"Linear",          "Non-linear"},
 	{"Preferred State", "No Preferred State"},
 	{"No Null Position","Null Position"},
-};
+});
 
 static std::string iof_flags_text(uint8_t raw, iof_kind kind) {
 	std::string s;
@@ -198,7 +208,7 @@ struct item_meta {
 };
 
 // Complete item table per HID 1.11 §6.2.2
-static constexpr item_meta item_table[] = {
+static constexpr auto item_table = std::to_array<item_meta>({
 	// Main items (type=0) — §6.2.2.4
 	{0, 0x08, "Input",          value_kind::iof_input},
 	{0, 0x09, "Output",         value_kind::iof_output},
@@ -229,11 +239,16 @@ static constexpr item_meta item_table[] = {
 	{2, 0x08, "String Minimum",     value_kind::u32},
 	{2, 0x09, "String Maximum",     value_kind::u32},
 	{2, 0x0A, "Delimiter",          value_kind::u32},
-};
+});
+static constexpr auto item_meta_proj(const item_meta& e) noexcept {
+	return std::make_tuple(e.type, e.tag);
+}
+static_assert(std::ranges::is_sorted(item_table, {}, &item_meta_proj));
 
-static const item_meta* find_meta(uint8_t type, uint8_t tag) {
-	for (const auto& e : item_table)
-		if (e.type == type && e.tag == tag) return &e;
+static const item_meta* find_meta(uint8_t type, uint8_t tag) noexcept {
+	auto key = std::make_tuple(type, tag);
+	auto it = std::ranges::lower_bound(item_table, key, {}, &item_meta_proj);
+	if (it != std::ranges::end(item_table) && item_meta_proj(*it) == key) return &*it;
 	return nullptr;
 }
 
@@ -254,20 +269,25 @@ static std::string format_value(const item_meta& meta, const item& it, uint16_t 
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// to_string() helpers — raw-byte column rendering via std::format
+// to_string() helpers
 // ════════════════════════════════════════════════════════════════════════════
+
+template<typename... Args>
+static void append_format(std::string& out, std::type_identity_t<std::format_string<Args...>> fmt, Args&&... args) {
+	std::format_to(std::back_inserter(out), fmt, std::forward<Args>(args)...);
+}
 
 static void append_item_bytes(std::string& out, const uint8_t* start, const uint8_t* end) {
 	for (const uint8_t* p = start; p < end; ++p) {
 		if (p != start) out += ", ";
-		out += std::format("0x{:02X}", *p);
+		append_format(out, "0x{:02X}", *p);
 	}
 	std::size_t len = static_cast<std::size_t>(end - start);
 	std::size_t pad = (len * 6 >= 24) ? 1 : (24 - len * 6);
 	out.append(pad, ' ');
 }
 
-static constexpr std::string_view type_fallback_names[] = {"Main", "Global", "Local", "Reserved"};
+static constexpr auto type_fallback_names = std::to_array<std::string_view>({"Main", "Global", "Local", "Reserved"});
 
 // ════════════════════════════════════════════════════════════════════════════
 // Parse handler table — maps (type, tag) → state-machine action
@@ -385,7 +405,7 @@ struct parse_entry {
 	parse_handler_fn handler;
 };
 
-static const parse_entry parse_table[] = {
+static constexpr auto parse_table = std::to_array<parse_entry>({
 	// Main (type=0)
 	{0, 0x08, handle_input},
 	{0, 0x09, handle_output},
@@ -403,11 +423,16 @@ static const parse_entry parse_table[] = {
 	{2, 0x00, l_usage},
 	{2, 0x01, l_usage_min},
 	{2, 0x02, l_usage_max},
-};
+});
+static constexpr auto parse_entry_proj(const parse_entry& e) noexcept {
+	return std::make_tuple(e.type, e.tag);
+}
+static_assert(std::ranges::is_sorted(parse_table, {}, &parse_entry_proj));
 
-static parse_handler_fn find_parse_handler(uint8_t type, uint8_t tag) {
-	for (const auto& e : parse_table)
-		if (e.type == type && e.tag == tag) return e.handler;
+static parse_handler_fn find_parse_handler(uint8_t type, uint8_t tag) noexcept {
+	auto key = std::make_tuple(type, tag);
+	auto it = std::ranges::lower_bound(parse_table, key, {}, &parse_entry_proj);
+	if (it != std::ranges::end(parse_table) && parse_entry_proj(*it) == key) return it->handler;
 	return nullptr;
 }
 
@@ -482,28 +507,28 @@ std::string report_descriptor_tree::to_string() const {
 		// End Collection reduces depth before the annotation line
 		if (it.type == 0 && it.tag == 0x0C && depth > 0) --depth;
 
-		std::string indent(depth * 2, ' ');
-		const item_meta* meta = find_meta(it.type, it.tag);
+		// Indent
+		result.append("// ");
+		result.append(depth * 2, ' ');
 
-		if (meta) {
+		if (const item_meta* meta = find_meta(it.type, it.tag)) {
 			if (it.type == 1 && it.tag == 0x00)
 				usage_page = static_cast<uint16_t>(it.data);
 
 			std::string value = format_value(*meta, it, usage_page);
 			if (value.empty())
-				result += std::format("// {}{}\n", indent, meta->name);
+				append_format(result, "{}\n", meta->name);
 			else
-				result += std::format("// {}{} ({})\n", indent, meta->name, value);
+				append_format(result, "{} ({})\n", meta->name, value);
 		} else {
-			result += std::format("// {}{} (tag=0x{:X})\n", indent,
-			                      type_fallback_names[it.type & 3], it.tag);
+			append_format(result, "{} (tag=0x{:X})\n", type_fallback_names[it.type & 3], it.tag);
 		}
 
 		// Collection increases depth after the annotation line
 		if (it.type == 0 && it.tag == 0x0A) ++depth;
 	}
 
-	result += std::format("\n// {} bytes\n", source_bytes_.size());
+	append_format(result, "\n// {} bytes\n", source_bytes_.size());
 	return result;
 }
 
